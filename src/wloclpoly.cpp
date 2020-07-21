@@ -7,7 +7,7 @@
 #include <map>
 #include <string>
 #include <iostream>
-#include <cmath>
+#include <math.h>
 
 using Eigen::VectorXd;
 using Eigen::MatrixXd;
@@ -17,7 +17,8 @@ using Rcpp::List;
 
 // [[Rcpp::depends(RcppEigen)]]
 inline VectorXd query(alglib::kdtree &kdt, 
-                      const VectorXd& x0)
+                      const VectorXd& x0,
+                      const double& h)
 {
     int p = x0.size(); 
     
@@ -27,8 +28,8 @@ inline VectorXd query(alglib::kdtree &kdt,
     
     for(int i=0; i<p; i++)
     {
-        bmin[i] = x0(i) - 1;
-        bmax[i] = x0(i) + 1;
+        bmin[i] = x0(i) - h;
+        bmax[i] = x0(i) + h;
     }
     
     int k = kdtreequerybox(kdt, bmin, bmax);
@@ -130,7 +131,9 @@ Eigen::VectorXd wlocpoly(const Eigen::MatrixXd x,
         
         delete[] pTag; 
         
-        alglib::kdtreebuildtagged(a,tags,p,0,2,kdt);         
+        alglib::kdtreebuildtagged(a,tags,p,0,2,kdt);
+        
+        Rcpp::Rcout<< "Tree built successfully" << std::endl;
     }
     
     VectorXd result(newx.rows());
@@ -138,51 +141,59 @@ Eigen::VectorXd wlocpoly(const Eigen::MatrixXd x,
     for (int i =0; i < newx.rows(); i++)
     {
         const VectorXd x0 = newx.row(i);
- 
-        VectorXd idx;
-        idx = query(kdt, x0);  // retrieve integer of tags 
         
-        Rcpp::Rcout << idx; 
+        VectorXd idx;
+        idx = query(kdt, x0, h);  // retrieve vector of tags 
         
         int m = idx.rows(); // number of items within distance 
-        
-        int D = 1;  // local linear (fix as local lienar at first)
+
+        int D = 1 + p;  // local linear (fix as local lienar at first)
        
         MatrixXd X = MatrixXd::Constant(m,D,1);
         MatrixXd W = MatrixXd::Identity(m,m);
         VectorXd Y = MatrixXd::Constant(m,1,0);
+
+        Rcpp::Rcout  << "Matrix created successfully for point" << i <<std::endl; 
+        
+        for(int j =0; j<m ; j++)
+            Y(j,0) = y(idx[j]); 
         
         for(int v=0; v < m; v++) // for each data point within th bandwidth
         {
             VectorXd x1 = x.row(idx[v]);
+            double dist1 = 0; 
             
             for(int q=0; q < p; q++) // for the first derivative
             {
                 X(v,1+q) = x1(q) - x0(q);
-                W(v,v) = W(v,v) * eval_kernel(kcode,(x1(q)-x0(q))/h);
+                //Rcpp::Rcout << "datapointused " << v << std::endl; 
+                //Rcpp::Rcout << "datapoint = " << i <<std::endl;
+                dist1 += pow(X(v,1+q),2)/h;
+                //Rcpp::Rcout << "dist ==" << X(v,1+q) << std::endl; 
+                //Rcpp::Rcout << "Euclidean distance of " << v << "point is" << dist1 << std::endl;  
             }
+            //  Rcpp:: Rcout << dist1 << "Dist" << std::endl;
+            W(v,v) = eval_kernel(kcode,dist1)/h; 
+            Rcpp::Rcout << W(v,v) << "Weight for point" <<  v <<std::endl;
+
+            // Rcpp::Rcout << "Weight successfully created for "  << std::endl;         
+            const MatrixXd& tmp = X.transpose() * W;
+            const MatrixXd& res = (tmp * X).inverse() * tmp * Y;
+            result(i) = res(0,0);
+           
         }
-            
-        const MatrixXd& tmp = X.transpose() * W;
-        const MatrixXd& res = (tmp * X).inverse() * tmp * Y;
-        
-        result(i) = res(0,0);
-        
-        Rcpp::Rcout << "round complete";
-    
     }
     
     return result; 
 }
 
 /***R
-x = as.matrix(c(2.2,2.3,2.4))
+x = cbind(c(1,5,8),c(1,5,8))
 y = as.matrix(c(3,4,5))
 d = 1 
-h = 0.02 
+h = 2
 xnew = x
 kernel = 'epanechnikov' 
 wlocpoly(x,y,xnew,d,kernel,h)
-
 */
 
